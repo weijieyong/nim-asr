@@ -65,4 +65,17 @@ docker exec -it parakeet-1-1b-ctc-en-us ls -R /data/models
 ```
 
 
+### Export Models to Host
+To manually copy the compiled models from the container to your host:
+```bash
+# 1. Copy models from the container
+sudo docker cp parakeet-1-1b-ctc-en-us:/data/models /home/jie/03_Exp/nim-asr/riva-models
+
+# 2. Fix permissions (NIM runs as root inside the container)
+sudo chown -R $USER:$USER /home/jie/03_Exp/nim-asr/riva-models
+
+# 3. Verify the size (should be ~4.6GB for parakeet-1-1b-ctc-en-us)
+du -sh /home/jie/03_Exp/nim-asr/riva-models
+```
+
 
