@@ -1,0 +1,27 @@
+services:
+  riva-asr:
+    image: nvcr.io/nim/nvidia/${CONTAINER_ID}:latest
+    container_name: ${CONTAINER_ID}
+    runtime: nvidia
+    shm_size: 16GB
+    environment:
+      - NGC_API_KEY=${NGC_API_KEY}
+      - NIM_TAGS_SELECTOR=${NIM_TAGS_SELECTOR}
+      - NIM_HTTP_API_PORT=${NIM_HTTP_API_PORT:-9000}
+      - NIM_GRPC_API_PORT=${NIM_GRPC_API_PORT:-50051}
+      - NIM_DISABLE_MODEL_DOWNLOAD=true
+    ports:
+      - "${NIM_HTTP_API_PORT:-9000}:9000"
+      - "${NIM_GRPC_API_PORT:-50051}:50051"
+    volumes:
+      - ${LOCAL_NIM_CACHE}:/opt/nim/.cache
+      - ${RIVA_MODELS_PATH}:/data/models
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['0']
+              capabilities: [gpu]
+    stdin_open: true
+    tty: true

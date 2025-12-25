@@ -1,0 +1,10 @@
+[project]
+name = "nim-asr"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "nvidia-riva-client>=2.24.0",
+    "pyaudio>=0.2.14",
+]
