@@ -6,8 +6,8 @@ PROJECT_DIR="/home/jie/03_Exp/nim-asr"
 LOG_FILE="$PROJECT_DIR/dictation.log"
 UV_BIN="$HOME/.local/bin/uv"
 
-# Environment for ydotool
-export YDOTOOL_SOCKET="/tmp/ydotool/socket"
+# Environment for ydotool (using xdotool for X11)
+# export YDOTOOL_SOCKET="/tmp/ydotool/socket"
 
 # Find the PID of the running script
 PID=$(pgrep -f "python.*direct_dictation.py")

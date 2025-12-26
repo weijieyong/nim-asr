@@ -6,9 +6,9 @@ This repository provides a Docker Compose setup for running NVIDIA NIM Riva ASR.
 
 ## Prerequisites
 
-Install `ydotoold` for automation support:
+Install `xdotool` for automation support (on X11, ydotool for Wayland):
 ```bash
-sudo apt install ydotoold
+sudo apt install xdotool
 ```
 
 ## Setup
@@ -79,3 +79,8 @@ du -sh /home/jie/03_Exp/nim-asr/riva-models
 ```
 
 
+
+debug tips
+
+for checking mic recording
+arecord -D hw:1,0 -f dat -d 10 /tmp/test.wav
