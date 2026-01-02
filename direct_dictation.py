@@ -8,19 +8,30 @@ import time
 
 # Configuration
 SERVER = "localhost:50051"
-SAMPLE_RATE = 48000
+SAMPLE_RATE = 16000  # Must match model's expected sample rate (16kHz)
 CHUNK_DURATION_MS = 100  # 100ms chunks for lower latency
 
 # Endpointing parameters - tune for faster response
 # Lower values = faster end-of-utterance detection (but may cut off speech)
 # Note: stop_history_eou must be < stop_history
+# Higher stop_history = wait longer before declaring end of utterance
+# ENDPOINTING = {
+#     "start_history": 80,        # Frames of audio to analyze for speech start
+#     "start_threshold": 0.5,     # Confidence threshold to start speech
+#     "stop_history": 800,        # Frames to analyze for speech end (longer = fewer breaks)
+#     "stop_threshold": 0.98,     # Confidence threshold to stop (higher = less aggressive)
+#     "stop_history_eou": 600,    # End-of-utterance history (must be < stop_history)
+#     "stop_threshold_eou": 0.98, # End-of-utterance confidence (higher = wait longer)
+# }
+
+# default
 ENDPOINTING = {
-    "start_history": 80,        # Frames of audio to analyze for speech start
-    "start_threshold": 0.5,     # Confidence threshold to start speech
-    "stop_history": 250,        # Frames to analyze for speech end
-    "stop_threshold": 0.5,      # Confidence threshold to stop
-    "stop_history_eou": 200,    # End-of-utterance history (must be < stop_history)
-    "stop_threshold_eou": 0.8,  # End-of-utterance confidence
+    "start_history": -1,        # Frames of audio to analyze for speech start
+    "start_threshold": -1.0,     # Confidence threshold to start speech
+    "stop_history": -1,        # Frames to analyze for speech end (longer = fewer breaks)
+    "stop_threshold": -1.0,     # Confidence threshold to stop (higher = less aggressive)
+    "stop_history_eou": -1,    # End-of-utterance history (must be < stop_history)
+    "stop_threshold_eou": -1.0, # End-of-utterance confidence (higher = wait longer)
 }
 
 # Restart stream every N seconds to prevent buffer buildup
