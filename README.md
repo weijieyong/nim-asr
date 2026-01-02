@@ -21,7 +21,11 @@ Audio is streamed to Riva ASR **during** recording in a background thread, so mo
 - NVIDIA GPU with Docker + NVIDIA Container Toolkit
 
 ```bash
-sudo apt install xdotool
+sudo apt update
+sudo apt install xdotool portaudio19-dev
+
+# Install uv (if not already installed)
+curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
 ## Setup
