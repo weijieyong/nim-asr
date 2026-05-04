@@ -41,6 +41,7 @@ import riva.client
 # Configuration
 # ============================================================================
 
+
 @dataclass
 class DictationConfig:
     """Central configuration for a dictation session.
@@ -66,43 +67,45 @@ class DictationConfig:
     verbatim_transcripts: bool = False
     """False = inverse text normalisation (dates → "May 4th", numbers → "42", etc.)."""
 
-    boosted_words: list[str] = field(default_factory=lambda: [
-        # Programming languages & tools
-        "Python",
-        "JavaScript",
-        "TypeScript",
-        "Rust",
-        "GoLang",
-        "CUDA",
-        "PyTorch",
-        "TensorFlow",
-        "FastAPI",
-        "React",
-        "Node",
-        "Docker",
-        "Kubernetes",
-        "gRPC",
-        "protobuf",
-        "REST",
-        "GraphQL",
-        "GitHub",
-        "Copilot",
-        "OpenCV",
-        "ROS",
-        # Common coding terms
-        "async",
-        "await",
-        "function",
-        "variable",
-        "const",
-        "let",
-        "kwargs",
-        "args",
-        "enum",
-        "config",
-        "middleware",
-        "endpoint",
-    ])
+    boosted_words: list[str] = field(
+        default_factory=lambda: [
+            # Programming languages & tools
+            "Python",
+            "JavaScript",
+            "TypeScript",
+            "Rust",
+            "GoLang",
+            "CUDA",
+            "PyTorch",
+            "TensorFlow",
+            "FastAPI",
+            "React",
+            "Node",
+            "Docker",
+            "Kubernetes",
+            "gRPC",
+            "protobuf",
+            "REST",
+            "GraphQL",
+            "GitHub",
+            "Copilot",
+            "OpenCV",
+            "ROS",
+            # Common coding terms
+            "async",
+            "await",
+            "function",
+            "variable",
+            "const",
+            "let",
+            "kwargs",
+            "args",
+            "enum",
+            "config",
+            "middleware",
+            "endpoint",
+        ]
+    )
     """Words to boost for better recognition of technical vocabulary."""
 
     boost_score: float = 10.0
@@ -120,69 +123,71 @@ class DictationConfig:
     # Extend this dict to add your own term → symbol mappings.
     # Keys are matched as plain substrings (case-insensitive planning).
     # For regex-level control, extend PostProcessor.process().
-    replacements: dict[str, str] = field(default_factory=lambda: {
-        # --- File extensions (context-aware: space-padded to avoid mid-word hits) ---
-        " dot py ": " .py ",
-        " dot yaml ": " .yaml ",
-        " dot yml ": " .yml ",
-        " dot json ": " .json ",
-        " dot toml ": " .toml ",
-        " dot md ": " .md ",
-        " dot txt ": " .txt ",
-        " dot csv ": " .csv ",
-        " dot env ": " .env ",
-        " dot lock ": " .lock ",
-        " dot log ": " .log ",
-        " dot cfg ": " .cfg ",
-        " dot ini ": " .ini ",
-        " dot conf ": " .conf ",
-        # Leading-edge variants (".py" at start of utterance)
-        "dot py ": ".py ",
-        "dot yaml ": ".yaml ",
-        "dot json ": ".json ",
-        # --- Technical terms the ASR often mangles ---
-        " R O S ": " ROS ",
-        " R O S 2 ": " ROS 2 ",
-        " R O S two ": " ROS 2 ",
-        " c u d a ": " CUDA ",
-        " C U D A ": " CUDA ",
-        "cuda underscore visible underscore devices": "CUDA_VISIBLE_DEVICES",
-        "CUDA underscore visible underscore devices": "CUDA_VISIBLE_DEVICES",
-        "c u d a visible devices": "CUDA visible devices",
-        "Fast API": "FastAPI",
-        "fast api": "FastAPI",
-        "open CV": "OpenCV",
-        "open cv": "OpenCV",
-        "type script": "TypeScript",
-        "type script": "TypeScript",
-        "Java script": "JavaScript",
-        "java script": "JavaScript",
-        "git hub": "GitHub",
-        "git lab": "GitLab",
-        "postgres SQL": "PostgreSQL",
-        "my SQL": "MySQL",
-        "sql lite": "SQLite",
-        "no SQL": "NoSQL",
-        # --- Special tokens ---
-        " star star ": " ** ",
-        "star star": "**",
-        " dot dot dot ": " ... ",
-        "dot dot dot": "...",
-        " right arrow ": " -> ",
-        " fat arrow ": " => ",
-        " fatarrow ": " => ",
-        " left paren ": " (",
-        " right paren ": ") ",
-        " left bracket ": " [",
-        " right bracket ": "] ",
-        " left brace ": " {",
-        " right brace ": "} ",
-        # --- Whitespace words ---
-        " new line": "\n",
-        " newline": "\n",
-        " new paragraph": "\n\n",
-        " tab": "\t",
-    })
+    replacements: dict[str, str] = field(
+        default_factory=lambda: {
+            # --- File extensions (context-aware: space-padded to avoid mid-word hits) ---
+            " dot py ": " .py ",
+            " dot yaml ": " .yaml ",
+            " dot yml ": " .yml ",
+            " dot json ": " .json ",
+            " dot toml ": " .toml ",
+            " dot md ": " .md ",
+            " dot txt ": " .txt ",
+            " dot csv ": " .csv ",
+            " dot env ": " .env ",
+            " dot lock ": " .lock ",
+            " dot log ": " .log ",
+            " dot cfg ": " .cfg ",
+            " dot ini ": " .ini ",
+            " dot conf ": " .conf ",
+            # Leading-edge variants (".py" at start of utterance)
+            "dot py ": ".py ",
+            "dot yaml ": ".yaml ",
+            "dot json ": ".json ",
+            # --- Technical terms the ASR often mangles ---
+            " R O S ": " ROS ",
+            " R O S 2 ": " ROS 2 ",
+            " R O S two ": " ROS 2 ",
+            " c u d a ": " CUDA ",
+            " C U D A ": " CUDA ",
+            "cuda underscore visible underscore devices": "CUDA_VISIBLE_DEVICES",
+            "CUDA underscore visible underscore devices": "CUDA_VISIBLE_DEVICES",
+            "c u d a visible devices": "CUDA visible devices",
+            "Fast API": "FastAPI",
+            "fast api": "FastAPI",
+            "open CV": "OpenCV",
+            "open cv": "OpenCV",
+            "type script": "TypeScript",
+            "Type script": "TypeScript",
+            "Java script": "JavaScript",
+            "java script": "JavaScript",
+            "git hub": "GitHub",
+            "git lab": "GitLab",
+            "postgres SQL": "PostgreSQL",
+            "my SQL": "MySQL",
+            "sql lite": "SQLite",
+            "no SQL": "NoSQL",
+            # --- Special tokens ---
+            " star star ": " ** ",
+            "star star": "**",
+            " dot dot dot ": " ... ",
+            "dot dot dot": "...",
+            " right arrow ": " -> ",
+            " fat arrow ": " => ",
+            " fatarrow ": " => ",
+            " left paren ": " (",
+            " right paren ": ") ",
+            " left bracket ": " [",
+            " right bracket ": "] ",
+            " left brace ": " {",
+            " right brace ": "} ",
+            # --- Whitespace words ---
+            " new line": "\n",
+            " newline": "\n",
+            " new paragraph": "\n\n",
+            " tab": "\t",
+        }
+    )
 
     def __post_init__(self) -> None:
         if self.log_level.upper() in ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"):
@@ -194,6 +199,7 @@ class DictationConfig:
 # ============================================================================
 # Audio Capture
 # ============================================================================
+
 
 class AudioCapture:
     """Records microphone audio to a WAV file.
@@ -257,9 +263,9 @@ class AudioCapture:
 
         with wave.open(output_path, "wb") as wf:
             wf.setnchannels(self.config.channels)
-            wf.setsampwidth(p.get_sample_size(
-                p.get_format_from_width(self.config.sample_width)
-            ))
+            wf.setsampwidth(
+                p.get_sample_size(p.get_format_from_width(self.config.sample_width))
+            )
             wf.setframerate(self.config.sample_rate)
             wf.writeframes(b"".join(frames))
 
@@ -269,6 +275,7 @@ class AudioCapture:
 # ============================================================================
 # ASR Transcriber  (Riva streaming, collect-only)
 # ============================================================================
+
 
 class StreamingTranscriber:
     """Replay a recorded WAV file through Riva streaming ASR.
@@ -326,7 +333,9 @@ class StreamingTranscriber:
         with wave.open(wav_path, "rb") as wf:
             raw_pcm = wf.readframes(wf.getnframes())
 
-        chunk_bytes = self._CHUNK_N_FRAMES * self.config.sample_width * self.config.channels
+        chunk_bytes = (
+            self._CHUNK_N_FRAMES * self.config.sample_width * self.config.channels
+        )
 
         def audio_chunks():
             for i in range(0, len(raw_pcm), chunk_bytes):
@@ -350,7 +359,9 @@ class StreamingTranscriber:
             return ""
 
         elapsed = time.monotonic() - t0
-        logging.info("Streaming ASR finished in %.1f s (%d utterance(s))", elapsed, len(parts))
+        logging.info(
+            "Streaming ASR finished in %.1f s (%d utterance(s))", elapsed, len(parts)
+        )
 
         return " ".join(parts).strip()
 
@@ -358,6 +369,7 @@ class StreamingTranscriber:
 # ============================================================================
 # Post-Processor
 # ============================================================================
+
 
 class PostProcessor:
     """Clean and transform a raw ASR transcript for coding/terminal use.
@@ -409,6 +421,7 @@ class PostProcessor:
 # Text Inserter
 # ============================================================================
 
+
 class TextInserter:
     """Insert final text into the currently focused text field / terminal.
 
@@ -437,13 +450,19 @@ class TextInserter:
         safe = text.replace("\\", "\\\\").replace('"', '\\"').replace("`", "\\`")
         safe = safe.replace("$", "\\$")
         cmd = [
-            "xdotool", "type",
-            "--clearmodifiers", "--delay", "0",
-            "--", safe,
+            "xdotool",
+            "type",
+            "--clearmodifiers",
+            "--delay",
+            "0",
+            "--",
+            safe,
         ]
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
         if result.returncode != 0:
-            logging.error("xdotool failed (rc=%d): %s", result.returncode, result.stderr.strip())
+            logging.error(
+                "xdotool failed (rc=%d): %s", result.returncode, result.stderr.strip()
+            )
         else:
             logging.info("Inserted %d characters via xdotool", len(text))
 
@@ -452,12 +471,15 @@ class TextInserter:
 # Logging
 # ============================================================================
 
+
 def _setup_logging(config: DictationConfig) -> None:
     """Configure logging to both file (with timestamps) and stderr."""
     root = logging.getLogger()
     root.setLevel(getattr(logging, config.log_level))
 
-    fmt = logging.Formatter("[%(asctime)s] %(levelname)-8s %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
+    fmt = logging.Formatter(
+        "[%(asctime)s] %(levelname)-8s %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
+    )
 
     # File handler
     fh = logging.FileHandler(config.log_file)
@@ -473,6 +495,7 @@ def _setup_logging(config: DictationConfig) -> None:
 # ============================================================================
 # Session lifecycle helpers
 # ============================================================================
+
 
 def _cleanup_temp(path: str) -> None:
     """Remove a temp file, logging any error."""
@@ -497,6 +520,7 @@ def _notify(title: str, message: str, icon: str = "dialog-information") -> None:
 # ============================================================================
 # Main workflow
 # ============================================================================
+
 
 def run_session(config: DictationConfig) -> int:
     """Run one complete dictation session: record → transcribe → insert.
