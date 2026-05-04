@@ -1,34 +1,41 @@
 #!/usr/bin/env python3
 """
-Offline toggle dictation for vibe coding.
+Toggle dictation for vibe coding.
 Record → Stop → Transcribe → Post-process → Insert.
 
 Designed to be run from a global hotkey (via toggle_dictation.sh):
   First press: start recording
-  Second press (SIGINT): stop recording → transcribe (offline ASR) → insert text
+  Second press (SIGINT): stop recording → transcribe → insert text
 
-No streaming ASR, no interim results, no force-kill during transcription.
-Clean shutdown: the process finalizes audio, transcribes, and exits on its own.
+Audio is fed to Riva streaming ASR **during** recording in a background thread
+so most of the GPU work completes before you press stop.  No interim/partial
+results are ever typed.  Only the final concatenated transcript is inserted.
+
+If the concurrent stream fails, the saved WAV file is replayed through
+streaming ASR as a fallback — you never lose audio.
 
 Dependencies: pyaudio, nvidia-riva-client, xdotool (system)
 
 Modular structure (extract to separate files later):
-  - AudioCapture  → dictation/audio.py
-  - RivaTranscriber → dictation/asr.py
-  - PostProcessor → dictation/post.py
-  - TextInserter  → dictation/insert.py
-  - Config        → dictation/config.py
+  - AudioCapture       → dictation/audio.py
+  - ConcurrentTranscriber → dictation/asr.py
+  - PostProcessor      → dictation/post.py
+  - TextInserter       → dictation/insert.py
+  - Config             → dictation/config.py
 """
 
 from __future__ import annotations
 
+import collections.abc
 import logging
 import os
+import queue
 import re
 import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import wave
 from dataclasses import dataclass, field
@@ -222,8 +229,17 @@ class AudioCapture:
         """Signal the recording loop to finish after the current chunk."""
         self._stopped = True
 
-    def record(self, output_path: str) -> str:
-        """Record until ``stop()`` is called. Returns *output_path*."""
+    def record(
+        self,
+        output_path: str,
+        chunk_callback: collections.abc.Callable[[bytes], None] | None = None,
+    ) -> str:
+        """Record until ``stop()`` is called.
+
+        If *chunk_callback* is given, each audio chunk is forwarded to it
+        immediately after being read — used to feed a
+        :class:`ConcurrentTranscriber` during recording.
+        """
         chunk = int(self.config.sample_rate * self.config.chunk_duration_ms / 1000)
         p = pyaudio.PyAudio()
         try:
@@ -247,6 +263,8 @@ class AudioCapture:
                 try:
                     data = stream.read(chunk, exception_on_overflow=False)
                     frames.append(data)
+                    if chunk_callback is not None:
+                        chunk_callback(data)
                 except OSError as exc:
                     logging.warning("Audio read glitch (continuing): %s", exc)
                     continue
@@ -289,8 +307,7 @@ class StreamingTranscriber:
     server can process it (no real-time pacing).
     """
 
-    # PCM chunk size sent per gRPC message (100 ms at 16 kHz).
-    _CHUNK_N_FRAMES = 1600
+    _CHUNK_N_FRAMES: int = 1600  # PCM chunk size (100 ms at 16 kHz).
 
     def __init__(self, config: DictationConfig) -> None:
         self.config: DictationConfig = config
@@ -364,6 +381,103 @@ class StreamingTranscriber:
         )
 
         return " ".join(parts).strip()
+
+
+# ============================================================================
+# Concurrent Transcriber  (live mic → Riva streaming in background thread)
+# ============================================================================
+
+
+class ConcurrentTranscriber:
+    """Feeds live mic audio to Riva streaming ASR in a background thread.
+
+    Call ``start()`` before recording, ``feed(chunk)`` for each mic chunk,
+    and ``stop()`` after recording ends to get the final transcript.
+
+    Final utterances are collected as they arrive from the server, so by
+    the time the user presses stop, most audio is already processed.
+    Only the trailing edge needs server finalization, which typically
+    takes 1–3 s instead of replaying the entire audio.
+    """
+
+    def __init__(self, config: DictationConfig) -> None:
+        self.config: DictationConfig = config
+        self._results: list[str] = []
+        self._lock: threading.Lock = threading.Lock()
+        self._chunks: queue.Queue[bytes | None] = queue.Queue()
+        self._thread: threading.Thread | None = None
+        self._error: Exception | None = None
+
+    def start(self) -> None:
+        """Launch the background ASR worker thread."""
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def feed(self, chunk: bytes) -> None:
+        """Forward a raw PCM chunk to the ASR stream (thread-safe)."""
+        self._chunks.put(chunk)
+
+    def stop(self) -> str:
+        """Signal end-of-audio and wait for the transcript.
+
+        Returns the concatenated final transcript, or raises on ASR failure.
+        """
+        self._chunks.put(None)  # sentinel — signals end of audio
+        assert self._thread is not None  # must call start() before stop()
+        self._thread.join(timeout=30)
+        if self._error is not None:
+            raise RuntimeError("concurrent ASR failed") from self._error
+        with self._lock:
+            return " ".join(self._results).strip()
+
+    def _run(self) -> None:
+        """Background thread: consume chunks, send to Riva, collect utterances."""
+        try:
+            auth = riva.client.Auth(uri=self.config.riva_server)
+            service = riva.client.ASRService(auth)
+
+            inner = riva.client.RecognitionConfig(
+                encoding=riva.client.AudioEncoding.LINEAR_PCM,
+                language_code=self.config.language_code,
+                max_alternatives=1,
+                profanity_filter=self.config.profanity_filter,
+                enable_automatic_punctuation=self.config.automatic_punctuation,
+                verbatim_transcripts=self.config.verbatim_transcripts,
+                sample_rate_hertz=self.config.sample_rate,
+                audio_channel_count=self.config.channels,
+            )
+
+            if self.config.boosted_words:
+                riva.client.add_word_boosting_to_config(
+                    inner,
+                    self.config.boosted_words,
+                    self.config.boost_score,
+                )
+
+            streaming_config = riva.client.StreamingRecognitionConfig(
+                config=inner,
+                interim_results=False,
+            )
+
+            def chunk_gen():
+                while True:
+                    chunk = self._chunks.get()
+                    if chunk is None:
+                        break
+                    yield chunk
+
+            for response in service.streaming_response_generator(
+                chunk_gen(),
+                streaming_config,
+            ):
+                for result in response.results:
+                    if result.is_final and result.alternatives:
+                        with self._lock:
+                            self._results.append(result.alternatives[0].transcript)
+
+        except Exception as exc:
+            self._error = exc
+            logging.error("Concurrent ASR worker failed: %s", exc)
 
 
 # ============================================================================
@@ -523,35 +637,35 @@ def _notify(title: str, message: str, icon: str = "dialog-information") -> None:
 
 
 def run_session(config: DictationConfig) -> int:
-    """Run one complete dictation session: record → transcribe → insert.
+    """Run one dictation session: record (concurrent ASR) → post-process → insert.
 
     Returns an exit code (0 = success).
     """
-    # ── Prepare temp file for audio ──────────────────────────────────────
+
+    # ── Prepare temp file for audio (always saved for fallback) ─────────
     tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
     tmp_path = tmp.name
     tmp.close()
 
-    # ── Record ───────────────────────────────────────────────────────────
+    # ── Record + concurrent ASR ──────────────────────────────────────────
     capture = AudioCapture(config)
+    transcriber = ConcurrentTranscriber(config)
 
-    # Install signal handlers that gracefully stop recording.
-    # SIGINT  = "stop" (sent by toggle_dictation.sh on second press).
-    # SIGTERM = fallback kill (set by shell timeout).
     def _on_stop(signum: int, _frame: object) -> None:
-        sig_name = signal.Signals(signum).name
         if not capture.is_stopped:
+            sig_name = signal.Signals(signum).name
             logging.info("Received %s – stopping recording …", sig_name)
             capture.stop()
 
     _ = signal.signal(signal.SIGINT, _on_stop)
     _ = signal.signal(signal.SIGTERM, _on_stop)
 
+    transcriber.start()
     logging.info("Recording … (press the dictation shortcut again to stop)")
     _notify("Dictation", "Recording …", "audio-input-microphone")
 
     try:
-        _ = capture.record(tmp_path)
+        _ = capture.record(tmp_path, chunk_callback=transcriber.feed)
     except (OSError, IOError) as exc:
         logging.error("Recording failed: %s", exc)
         _notify("Dictation", f"Recording failed: {exc}", "dialog-error")
@@ -567,13 +681,21 @@ def run_session(config: DictationConfig) -> int:
     logging.info("Saved %d bytes to %s", file_size, tmp_path)
 
     # ── Transcribe ───────────────────────────────────────────────────────
-    # Restore default signal handlers for SIGINT/SIGTERM so that Ctrl+C
-    # during transcription kills the process immediately.
+    # Restore default signal handlers in case anything blocks below.
     _ = signal.signal(signal.SIGINT, signal.SIG_DFL)
     _ = signal.signal(signal.SIGTERM, signal.SIG_DFL)
 
-    transcriber = StreamingTranscriber(config)
-    transcript = transcriber.transcribe(tmp_path)
+    # Primary path: collect results from the concurrent stream.
+    transcript = ""
+    try:
+        transcript = transcriber.stop()
+    except RuntimeError:
+        logging.warning("Concurrent ASR failed — falling back to two-phase replay.")
+        try:
+            fallback = StreamingTranscriber(config)
+            transcript = fallback.transcribe(tmp_path)
+        except Exception as exc:
+            logging.error("Fallback ASR also failed: %s", exc)
 
     _cleanup_temp(tmp_path)
 
