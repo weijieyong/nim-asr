@@ -15,3 +15,6 @@ wheels/
 riva-models/
 
 *.log
+
+
+.vscode/
