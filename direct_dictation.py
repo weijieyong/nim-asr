@@ -26,12 +26,12 @@ CHUNK_DURATION_MS = 100  # 100ms chunks for lower latency
 
 # default
 ENDPOINTING = {
-    "start_history": -1,        # Frames of audio to analyze for speech start
-    "start_threshold": -1.0,     # Confidence threshold to start speech
-    "stop_history": -1,        # Frames to analyze for speech end (longer = fewer breaks)
-    "stop_threshold": -1.0,     # Confidence threshold to stop (higher = less aggressive)
-    "stop_history_eou": -1,    # End-of-utterance history (must be < stop_history)
-    "stop_threshold_eou": -1.0, # End-of-utterance confidence (higher = wait longer)
+    "start_history": -1,  # Frames of audio to analyze for speech start
+    "start_threshold": -1.0,  # Confidence threshold to start speech
+    "stop_history": -1,  # Frames to analyze for speech end (longer = fewer breaks)
+    "stop_threshold": -1.0,  # Confidence threshold to stop (higher = less aggressive)
+    "stop_history_eou": -1,  # End-of-utterance history (must be < stop_history)
+    "stop_threshold_eou": -1.0,  # End-of-utterance confidence (higher = wait longer)
 }
 
 # Restart stream every N seconds to prevent buffer buildup
@@ -45,8 +45,17 @@ typing_lock = threading.Lock()
 # This significantly improves recognition of technical terms, names, etc.
 BOOSTED_WORDS = [
     # Programming terms
-    "Python", "JavaScript", "TypeScript", "GitHub", "Copilot",
-    "async", "await", "function", "variable", "const", "let",
+    "Python",
+    "JavaScript",
+    "TypeScript",
+    "GitHub",
+    "Copilot",
+    "async",
+    "await",
+    "function",
+    "variable",
+    "const",
+    "let",
     # Add your frequently used terms here
 ]
 BOOST_SCORE = 10.0  # Higher = stronger bias toward these words (typical: 4-20)
@@ -62,16 +71,30 @@ def typing_worker():
         try:
             with typing_lock:
                 if action == "type":
-                    subprocess.run([
-                        "xdotool", "type",
-                        "--clearmodifiers", "--delay", "0",
-                        "--", arg
-                    ], check=False)
+                    subprocess.run(
+                        [
+                            "xdotool",
+                            "type",
+                            "--clearmodifiers",
+                            "--delay",
+                            "0",
+                            "--",
+                            arg,
+                        ],
+                        check=False,
+                    )
                 elif action == "delete":
-                    subprocess.run([
-                        "xdotool", "key",
-                        "--clearmodifiers", "--delay", "0",
-                    ] + ["BackSpace"] * arg, check=False)
+                    subprocess.run(
+                        [
+                            "xdotool",
+                            "key",
+                            "--clearmodifiers",
+                            "--delay",
+                            "0",
+                        ]
+                        + ["BackSpace"] * arg,
+                        check=False,
+                    )
         except Exception as e:
             print(f"xdotool error: {e}")
         typing_queue.task_done()
@@ -87,6 +110,7 @@ def delete_chars(count):
     """Queue character deletion (non-blocking)."""
     if count > 0:
         typing_queue.put(("delete", count))
+
 
 def main():
     # Start background typing thread
@@ -137,8 +161,10 @@ def main():
 
     while True:  # Outer loop for stream restarts
         stream_start_time = time.time()
-        
-        with riva.client.audio_io.MicrophoneStream(SAMPLE_RATE, chunk_size) as audio_chunks:
+
+        with riva.client.audio_io.MicrophoneStream(
+            SAMPLE_RATE, chunk_size
+        ) as audio_chunks:
             responses = asr_service.streaming_response_generator(
                 audio_chunks=audio_chunks,
                 streaming_config=config,
@@ -152,7 +178,9 @@ def main():
                 if STREAM_RESTART_INTERVAL > 0:
                     elapsed = time.time() - stream_start_time
                     if elapsed > STREAM_RESTART_INTERVAL:
-                        print(f"\n[Restarting stream after {int(elapsed)}s to prevent lag...]")
+                        print(
+                            f"\n[Restarting stream after {int(elapsed)}s to prevent lag...]"
+                        )
                         break  # Exit inner loop, restart stream
 
                 if not response.results:
@@ -171,7 +199,7 @@ def main():
                 else:
                     # Interim result: handle corrections and additions
                     if transcript.startswith(last_transcript):
-                        new_part = transcript[len(last_transcript):]
+                        new_part = transcript[len(last_transcript) :]
                         type_text(new_part)
                         typed_length += len(new_part)
                     else:
@@ -180,7 +208,8 @@ def main():
                         typed_length = len(transcript)
                     last_transcript = transcript
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:

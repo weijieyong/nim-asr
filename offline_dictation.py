@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Toggle dictation for vibe coding.
+Global-hotkey dictation.  Speech → text into any focused text field.
 Record → Stop → Transcribe → Post-process → Insert.
 
 Designed to be run from a global hotkey (via toggle_dictation.sh):
@@ -486,9 +486,10 @@ class ConcurrentTranscriber:
 
 
 class PostProcessor:
-    """Clean and transform a raw ASR transcript for coding/terminal use.
+    """Clean and transform a raw ASR transcript before insertion.
 
-    Apply a set of customisable string replacements, then run optional
+    Apply a set of customisable string replacements (useful for technical
+    terms, special characters, file extensions), then run optional
     normalisation passes.  Extend by adding entries to the *replacements*
     dict in :class:`DictationConfig` or by subclassing ``process()``.
 
@@ -637,7 +638,7 @@ def _notify(title: str, message: str, icon: str = "dialog-information") -> None:
 
 
 def run_session(config: DictationConfig) -> int:
-    """Run one dictation session: record (concurrent ASR) → post-process → insert.
+    """Run one dictation session: record with concurrent ASR → post-process → insert.
 
     Returns an exit code (0 = success).
     """
