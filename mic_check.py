@@ -1,13 +1,15 @@
 # /// script
 # dependencies = [
+#   "pyaudio",
 #   "sounddevice",
 # ]
 # ///
 
+import pyaudio
 import sounddevice as sd
 
 
-def check_rates():
+def check_rates() -> None:
     print("Scanning audio devices...\n")
     try:
         devices = sd.query_devices()
@@ -15,7 +17,6 @@ def check_rates():
         print(f"Error querying devices: {e}")
         return
 
-    # Filter for input devices
     found_input = False
     for i, dev in enumerate(devices):
         if dev["max_input_channels"] > 0:
@@ -26,25 +27,33 @@ def check_rates():
 
             print("  Supported Possible Rates (Probing): ", end="", flush=True)
             supported = []
-            # Common audio sample rates to test
-            test_rates = [16000, 32000, 44100, 48000, 88200, 96000]
-            for rate in test_rates:
+            for rate in [16000, 32000, 44100, 48000, 88200, 96000]:
                 try:
-                    # check_input_settings raises an error if the config is invalid
                     sd.check_input_settings(device=i, samplerate=rate)
                     supported.append(rate)
                 except Exception:
                     pass
 
-            if supported:
-                print(f"{supported}")
-            else:
-                print("None of the common rates matched (or device busy)")
+            print(supported if supported else "None of the common rates matched (or device busy)")
             print("-" * 40)
 
     if not found_input:
         print("No input devices found.")
 
 
+def get_usb_mic_index(target_name: str = "usb") -> int | None:
+    p = pyaudio.PyAudio()
+    for i in range(p.get_device_count()):
+        info = p.get_device_info_by_index(i)
+        if target_name.lower() in info["name"].lower() and info["maxInputChannels"] > 0:
+            p.terminate()
+            return i
+    p.terminate()
+    return None
+
+
 if __name__ == "__main__":
     check_rates()
+    print()
+    index = get_usb_mic_index()
+    print(f"USB mic device index (pyaudio): {index}")
