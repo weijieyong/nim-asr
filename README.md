@@ -38,7 +38,7 @@ Configure your `.env` file with an NGC API key, then start the server:
 docker compose up
 ```
 
-The server exposes a gRPC endpoint at `localhost:50051` (the model is `parakeet-1.1b-en-US-asr-streaming` — streaming-only).
+The server exposes a gRPC endpoint at `localhost:50501` by default when `NIM_GRPC_API_PORT=50501` (the model is `parakeet-1.1b-en-US-asr-streaming` — streaming-only).
 
 ### 2. Client Dependencies
 

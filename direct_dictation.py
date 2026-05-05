@@ -6,8 +6,10 @@ import threading
 import queue
 import time
 
+from dictation.config import DictationConfig
+
 # Configuration
-SERVER = "localhost:50051"
+SERVER = DictationConfig().riva_server
 SAMPLE_RATE = 16000  # Must match model's expected sample rate (16kHz)
 CHUNK_DURATION_MS = 100  # 100ms chunks for lower latency
 

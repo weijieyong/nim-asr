@@ -33,6 +33,23 @@ def _getenv_int(name: str, default: int | None = None) -> int | None:
         return default
 
 
+def _getenv_str(name: str, default: str | None = None) -> str | None:
+    value = os.getenv(name)
+    if value is None:
+        value = _read_dotenv_value(name)
+    if value is None or value.strip() == "":
+        return default
+    return value.strip()
+
+
+def _default_riva_server() -> str:
+    server = _getenv_str("NIM_ASR_RIVA_SERVER")
+    if server is not None:
+        return server
+    grpc_port = _getenv_int("NIM_GRPC_API_PORT", 50051)
+    return f"localhost:{grpc_port}"
+
+
 @dataclass
 class DictationConfig:
     # --- Audio recording ---
@@ -48,7 +65,7 @@ class DictationConfig:
     chunk_duration_ms: int = 100
 
     # --- Riva / NIM ASR ---
-    riva_server: str = "localhost:50051"
+    riva_server: str = field(default_factory=_default_riva_server)
     language_code: str = "en-US"
     profanity_filter: bool = False
     automatic_punctuation: bool = True
