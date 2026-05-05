@@ -10,8 +10,16 @@ A toggle-based dictation system that converts speech to text into any text field
 
 ```
 nim-asr/
-├── offline_dictation.py    # Main Python script (single file, modular classes)
+├── offline_dictation.py    # Entry point: session lifecycle, signal handling, logging
 ├── toggle_dictation.sh     # Shell launcher bound to global hotkey
+├── mic_check.py            # Diagnostic utility: list input devices + find USB mic index
+├── dictation/              # Core library package
+│   ├── __init__.py         # Re-exports all public classes
+│   ├── config.py           # DictationConfig dataclass + .env helpers
+│   ├── audio.py            # AudioCapture + PCM resampler
+│   ├── asr.py              # ConcurrentTranscriber + StreamingTranscriber (fallback)
+│   ├── post.py             # PostProcessor (replacements + whitespace)
+│   └── insert.py           # TextInserter (xdotool backend)
 ├── AGENTS.md               # This file — AI agent context
 ├── README.md               # Human-facing docs
 ├── pyproject.toml          # Python deps (pyaudio, nvidia-riva-client)
@@ -29,14 +37,15 @@ toggle_dictation.sh  (global hotkey bind)
        │  first press: spawns
        │  second press: sends SIGINT
        ▼
-offline_dictation.py
+offline_dictation.py          ← session lifecycle, signal handlers, logging setup
   │
-  ├── DictationConfig      ← all settings, boosted words, replacements
-  ├── AudioCapture         ← pyaudio, writes WAV, feeds chunks to callback
-  ├── ConcurrentTranscriber ← bg thread, streams mic chunks to Riva live
-  │     └── fallback: StreamingTranscriber  ← replay WAV through streaming
-  ├── PostProcessor        ← string replacements + whitespace cleanup
-  └── TextInserter         ← xdotool type (pluggable backend)
+  └── dictation/              ← importable package
+        ├── DictationConfig   ← all settings, boosted words, replacements
+        ├── AudioCapture      ← pyaudio, writes WAV, feeds chunks to callback
+        ├── ConcurrentTranscriber  ← bg thread, streams mic chunks to Riva live
+        │     └── fallback: StreamingTranscriber  ← replay WAV through streaming
+        ├── PostProcessor     ← string replacements + whitespace cleanup
+        └── TextInserter      ← xdotool type (pluggable backend)
 ```
 
 ### Data Flow (happy path)
@@ -62,52 +71,55 @@ User presses hotkey (second press)
        └→ process exits
 ```
 
-## Class Reference
+## Module Reference
 
-### `DictationConfig` (dataclass)
-Central config. Fields documented inline. Key areas:
-- **Audio**: `sample_rate` (16000), `channels` (1), `chunk_duration_ms` (100)
+### `dictation/config.py` — `DictationConfig`
+Central config dataclass. Key fields:
+- **Audio**: `sample_rate` (16000), `capture_sample_rate` (env: `NIM_ASR_CAPTURE_SAMPLE_RATE`), `channels` (1), `chunk_duration_ms` (100)
+- **Device**: `input_device_index` (env: `NIM_ASR_INPUT_DEVICE_INDEX`) — leave unset for system default
 - **Riva**: `riva_server`, `language_code`, `profanity_filter`, `automatic_punctuation`, `verbatim_transcripts`
 - **Boosting**: `boosted_words` (list of technical terms), `boost_score` (10.0)
 - **Insertion**: `inserter` ("xdotool")
 - **Post-processing**: `replacements` (term → symbol mapping dict)
 - **Logging**: `log_file`, `log_level`
 
-**Extraction path**: → `dictation/config.py`
+Private helpers `_read_dotenv_value` / `_getenv_int` read integer settings from env or local `.env`.
 
-### `AudioCapture`
-Records mic to WAV file. Properties:
-- `stop()` / `is_stopped` — signal from SIGINT handler
+### `dictation/audio.py` — `AudioCapture`
+Records mic to WAV file.
+- `stop()` / `is_stopped` — called from SIGINT handler
 - `record(output_path, chunk_callback=None)` — blocking loop, feeds each chunk to callback
 
-**Signal response latency**: bounded by `chunk_duration_ms` (100ms). The loop checks `_stopped` after each `stream.read()` returns. In CPython, signal handlers run between bytecode instructions, so the handler executes after `read()` returns.
+`_resample_pcm16_mono(data, from_rate, to_rate)` — linear resampler for devices that reject 16 kHz input.
 
-**Extraction path**: → `dictation/audio.py`
+**Signal response latency**: bounded by `chunk_duration_ms` (100ms). The loop checks `_stopped` after each `stream.read()` returns.
 
-### `ConcurrentTranscriber`
-Background thread feeds mic chunks to Riva streaming ASR live.
+### `dictation/asr.py` — `ConcurrentTranscriber` + `StreamingTranscriber`
+
+`ConcurrentTranscriber` — background thread feeds live mic audio to Riva streaming ASR.
 - `start()` — launches worker thread
 - `feed(chunk)` — thread-safe queue put
 - `stop()` → `str` — sends sentinel, joins thread, returns concatenated transcript. Raises `RuntimeError` on ASR failure.
 
-**Threading**: Uses `queue.Queue[bytes | None]`. The sentinel `None` signals end-of-stream to the gRPC generator. The worker thread holds `_results: list[str]` behind `_lock`.
+**Threading**: `queue.Queue[bytes | None]`. Sentinel `None` signals end-of-stream to the gRPC generator. Worker thread holds `_results: list[str]` behind `_lock`.
 
-**Why streaming with interim_results=False**: The Riva model doesn't support offline batch. We use streaming but never show partials. The `interim_results=False` config means the server only sends back utterances when endpointing detects a complete utterance.
+`StreamingTranscriber` — fallback: replays a saved WAV through streaming ASR when `ConcurrentTranscriber` fails. Reads raw PCM via `wave.readframes()`, chunks it, sends through `streaming_response_generator`.
 
-**Extraction path**: → `dictation/asr.py`
+`_build_recognition_config(config)` — shared helper that constructs `RecognitionConfig` with word boosting for both transcriber classes.
 
-### `StreamingTranscriber` (fallback)
-Replays a saved WAV file through streaming ASR. Used as fallback when `ConcurrentTranscriber` fails. Reads raw PCM via `wave.readframes()`, chunks it, sends through `streaming_response_generator`.
+**Why `interim_results=False`**: The Riva model doesn't support offline batch. We use streaming but never show partials. The server only sends back utterances when endpointing detects a complete utterance.
 
-### `PostProcessor`
+### `dictation/post.py` — `PostProcessor`
 Applies `DictationConfig.replacements` as sorted string replacements (longest keys first to avoid partial matches), then normalizes whitespace.
 
-**Extraction path**: → `dictation/post.py`
-
-### `TextInserter`
+### `dictation/insert.py` — `TextInserter`
 Currently `xdotool type --clearmodifiers`. Escapes `\`, `"`, `` ` ``, `$`. Pluggable — add methods for ydotool, clipboard paste, etc.
 
-**Extraction path**: → `dictation/insert.py`
+### `offline_dictation.py` — Entry point
+Session-level glue: `_setup_logging`, `_notify`, `_cleanup_temp`, `run_session`, `main`.
+
+### `mic_check.py` — Diagnostic utility
+Lists all input devices (name, channels, supported sample rates via `sounddevice`) then prints the pyaudio device index of the first USB mic. Run with `uv run mic_check.py`. Not used by the main dictation flow.
 
 ## Signal Protocol
 
@@ -132,32 +144,16 @@ Currently `xdotool type --clearmodifiers`. Escapes `\`, `"`, `` ` ``, `$`. Plugg
 ## Configuration & Customization
 
 ### Word Boosting
-Edit `DictationConfig.boosted_words` for terms the ASR frequently misrecognizes. Scores can vary per word via `boost_score`.
+Edit `DictationConfig.boosted_words` in `dictation/config.py` for terms the ASR frequently misrecognizes.
 
 ### Post-Processing Replacements
-Edit `DictationConfig.replacements` dict. Keys are matched as plain substrings. Sort order matters: longer keys match first (prevents `" dot py "` being shadowed by `" dot "`).
+Edit `DictationConfig.replacements` in `dictation/config.py`. Keys are matched as plain substrings. Longer keys match first (prevents `" dot py "` being shadowed by `" dot "`).
 
-To extend with regex patterns, modify `PostProcessor.process()`.
+To extend with regex patterns, modify `PostProcessor.process()` in `dictation/post.py`.
 
-## Future Extension Points
-
-The code is designed for modular extraction:
-
-| Current Location | Future Module |
-|---|---|
-| `DictationConfig` | `dictation/config.py` |
-| `AudioCapture` | `dictation/audio.py` |
-| `ConcurrentTranscriber` + `StreamingTranscriber` | `dictation/asr.py` |
-| `PostProcessor` | `dictation/post.py` |
-| `TextInserter` | `dictation/insert.py` |
-
-Known planned extensions:
-- **LLM cleanup**: Add a post-ASR LLM pass in PostProcessor
-- **Command mode vs natural prompt**: Detect "command" speech pattern vs dictation
-- **Wayland support**: Add `ydotool` backend to TextInserter
-- **Clipboard paste mode**: Add `pyperclip` + simulated Ctrl+V inserter
-- **Config file**: Load `DictationConfig` from YAML/TOML
-- **Custom vocabulary**: Per-project or per-session word lists
+### Device Selection
+Set `NIM_ASR_INPUT_DEVICE_INDEX` in `.env` to pin a specific mic. Run `uv run mic_check.py` to find the index.
+Set `NIM_ASR_CAPTURE_SAMPLE_RATE` if your device rejects 16 kHz (e.g. `44100`); audio is resampled automatically.
 
 ## Error Handling Patterns
 
@@ -175,6 +171,15 @@ Known planned extensions:
 - Concurrent streaming processes audio during recording → post-stop latency is just ~0.5-1s (trailing finalization)
 - Two-phase fallback replay adds full audio-duration latency
 - No interim/partial results are ever typed at any power state
+
+## Known Planned Extensions
+
+- **LLM cleanup**: Post-ASR LLM pass in `PostProcessor`
+- **Command mode vs natural prompt**: Detect speech intent in `PostProcessor`
+- **Wayland support**: `ydotool` backend in `TextInserter`
+- **Clipboard paste mode**: `pyperclip` + simulated Ctrl+V inserter
+- **Config file**: Load `DictationConfig` from YAML/TOML
+- **Custom vocabulary**: Per-project or per-session word lists
 
 ## Conventions
 

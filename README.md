@@ -68,7 +68,7 @@ The text appears in whatever window or terminal is currently focused (IDE, termi
 
 ## Post-Processing
 
-Raw ASR output is cleaned up via a configurable replacement dictionary — useful for technical terms, special characters, file extensions, and common dictation patterns. Edit `DictationConfig.replacements` in `offline_dictation.py` to add your own mappings.
+Raw ASR output is cleaned up via a configurable replacement dictionary — useful for technical terms, special characters, file extensions, and common dictation patterns. Edit `DictationConfig.replacements` in `dictation/config.py` to add your own mappings.
 
 ### Default replacements include:
 
@@ -89,7 +89,7 @@ Replacements are sorted by key length (longest first) so `"dot py "` matches bef
 
 ### Word Boosting
 
-The ASR often misrecognizes domain-specific terms (technical jargon, names, unusual words). Add them to `DictationConfig.boosted_words`:
+The ASR often misrecognizes domain-specific terms (technical jargon, names, unusual words). Add them to `DictationConfig.boosted_words` in `dictation/config.py`:
 
 ```python
 boosted_words = [
@@ -149,17 +149,19 @@ sudo chown -R $USER:$USER /home/jie/03_Exp/nim-asr/riva-models
 
 ## Architecture (for Developers)
 
-See [AGENTS.md](AGENTS.md) for the full architecture, class reference, and extension plans.
+See [AGENTS.md](AGENTS.md) for the full architecture, module reference, and extension plans.
 
-The code is organized as a single file (`offline_dictation.py`) with clearly separated classes designed for extraction into a package:
+The core logic lives in the `dictation/` package; `offline_dictation.py` is a thin session entry point:
 
-| Class | Future Module |
+| Module | Contents |
 |---|---|
-| `DictationConfig` | `dictation/config.py` |
-| `AudioCapture` | `dictation/audio.py` |
-| `ConcurrentTranscriber` | `dictation/asr.py` |
-| `PostProcessor` | `dictation/post.py` |
-| `TextInserter` | `dictation/insert.py` |
+| `dictation/config.py` | `DictationConfig` dataclass + `.env` helpers |
+| `dictation/audio.py` | `AudioCapture` + PCM resampler |
+| `dictation/asr.py` | `ConcurrentTranscriber` + `StreamingTranscriber` (fallback) |
+| `dictation/post.py` | `PostProcessor` (replacements + whitespace) |
+| `dictation/insert.py` | `TextInserter` (xdotool backend) |
+| `offline_dictation.py` | Session lifecycle, signal handling, logging |
+| `mic_check.py` | Diagnostic: list devices + find USB mic index |
 
 ## Troubleshooting
 
@@ -170,4 +172,4 @@ The code is organized as a single file (`offline_dictation.py`) with clearly sep
 | Text appears 10s+ after stop | GPU on battery (30W) | Plug in AC power for faster processing |
 | ASR returns "Unavailable model" | Wrong model config | Check compose.yaml uses `parakeet-1.1b-en-US-asr-streaming` |
 | `xdotool` fails | Wrong X11 display / Wayland | Run `echo $DISPLAY`; use X11 session (Wayland support TBD) |
-| No audio recorded | Wrong mic selected | `arecord -D hw:1,0 -f dat -d 5 /tmp/test.wav` to test mic |
+| No audio recorded | Wrong mic selected | Run `uv run mic_check.py` to find the correct device index, set `NIM_ASR_INPUT_DEVICE_INDEX` in `.env` |
