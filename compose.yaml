@@ -9,7 +9,7 @@ services:
       - NIM_TAGS_SELECTOR=${NIM_TAGS_SELECTOR}
       - NIM_HTTP_API_PORT=${NIM_HTTP_API_PORT:-9000}
       - NIM_GRPC_API_PORT=${NIM_GRPC_API_PORT:-50505}
-      - NIM_DISABLE_MODEL_DOWNLOAD=true  # comment this out on the first run
+      - NIM_DISABLE_MODEL_DOWNLOAD=${NIM_DISABLE_MODEL_DOWNLOAD:-true}  # comment this out on the first run
     ports:
       - "${NIM_HTTP_API_PORT:-9000}:9000"
       - "${NIM_GRPC_API_PORT:-50051}:50051"
