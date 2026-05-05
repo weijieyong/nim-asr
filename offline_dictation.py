@@ -27,6 +27,7 @@ Modular structure (extract to separate files later):
 from __future__ import annotations
 
 import collections.abc
+import array
 import logging
 import os
 import queue
@@ -49,6 +50,64 @@ import riva.client
 # ============================================================================
 
 
+def _read_dotenv_value(name: str, path: str = ".env") -> str | None:
+    """Return a simple KEY=VALUE entry from a local .env file, if present."""
+    try:
+        with open(path, encoding="utf-8") as env_file:
+            for line in env_file:
+                stripped = line.strip()
+                if not stripped or stripped.startswith("#") or "=" not in stripped:
+                    continue
+                key, value = stripped.split("=", 1)
+                if key.strip() == name:
+                    return value.strip().strip("\"'")
+    except FileNotFoundError:
+        return None
+    return None
+
+
+def _getenv_int(name: str, default: int | None = None) -> int | None:
+    """Read an integer setting from the environment or local .env file."""
+    value = os.getenv(name)
+    if value is None:
+        value = _read_dotenv_value(name)
+    if value is None or value.strip() == "":
+        return default
+    try:
+        return int(value)
+    except ValueError:
+        logging.warning("Ignoring invalid integer for %s: %r", name, value)
+        return default
+
+
+def _resample_pcm16_mono(data: bytes, from_rate: int, to_rate: int) -> bytes:
+    """Linearly resample signed 16-bit mono PCM."""
+    if from_rate == to_rate or not data:
+        return data
+
+    samples = array.array("h")
+    samples.frombytes(data)
+    if sys.byteorder != "little":
+        samples.byteswap()
+
+    in_count = len(samples)
+    out_count = max(1, round(in_count * to_rate / from_rate))
+    ratio = from_rate / to_rate
+    resampled = array.array("h")
+
+    for out_index in range(out_count):
+        source = out_index * ratio
+        left = int(source)
+        right = min(left + 1, in_count - 1)
+        fraction = source - left
+        value = round(samples[left] + (samples[right] - samples[left]) * fraction)
+        resampled.append(value)
+
+    if sys.byteorder != "little":
+        resampled.byteswap()
+    return resampled.tobytes()
+
+
 @dataclass
 class DictationConfig:
     """Central configuration for a dictation session.
@@ -58,10 +117,28 @@ class DictationConfig:
 
     # --- Audio recording ---
     sample_rate: int = 16000
-    """Hz. 16 kHz mono PCM ― Riva standard."""
+    """Hz sent to Riva ASR. Keep at 16 kHz for this model."""
+
+    capture_sample_rate: int | None = field(
+        default_factory=lambda: _getenv_int("NIM_ASR_CAPTURE_SAMPLE_RATE")
+    )
+    """Hz requested from the microphone.
+
+    Leave unset to capture directly at sample_rate. Set this only when a device
+    rejects 16 kHz input, e.g. NIM_ASR_CAPTURE_SAMPLE_RATE=44100 in .env.
+    Captured audio is resampled to sample_rate before ASR and WAV fallback.
+    """
 
     channels: int = 1
     sample_width: int = 2  # 16-bit
+    input_device_index: int | None = field(
+        default_factory=lambda: _getenv_int("NIM_ASR_INPUT_DEVICE_INDEX")
+    )
+    """PyAudio input device index from NIM_ASR_INPUT_DEVICE_INDEX.
+
+    Leave unset to use the system default microphone. For a specific machine,
+    put e.g. NIM_ASR_INPUT_DEVICE_INDEX=10 in the local, gitignored .env file.
+    """
     chunk_duration_ms: int = 100
     """Duration of each audio chunk read from the mic.
     This bounds the latency between pressing stop and the recording loop exiting."""
@@ -197,6 +274,8 @@ class DictationConfig:
     )
 
     def __post_init__(self) -> None:
+        if self.capture_sample_rate is None:
+            self.capture_sample_rate = self.sample_rate
         if self.log_level.upper() in ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"):
             self.log_level = self.log_level.upper()
         else:
@@ -240,14 +319,16 @@ class AudioCapture:
         immediately after being read — used to feed a
         :class:`ConcurrentTranscriber` during recording.
         """
-        chunk = int(self.config.sample_rate * self.config.chunk_duration_ms / 1000)
+        capture_rate = self.config.capture_sample_rate or self.config.sample_rate
+        chunk = int(capture_rate * self.config.chunk_duration_ms / 1000)
         p = pyaudio.PyAudio()
         try:
             stream = p.open(
                 format=p.get_format_from_width(self.config.sample_width),
                 channels=self.config.channels,
-                rate=self.config.sample_rate,
+                rate=capture_rate,
                 input=True,
+                input_device_index=self.config.input_device_index,
                 frames_per_buffer=chunk,
             )
         except OSError as exc:
@@ -262,6 +343,11 @@ class AudioCapture:
             while not self._stopped:
                 try:
                     data = stream.read(chunk, exception_on_overflow=False)
+                    data = _resample_pcm16_mono(
+                        data,
+                        from_rate=capture_rate,
+                        to_rate=self.config.sample_rate,
+                    )
                     frames.append(data)
                     if chunk_callback is not None:
                         chunk_callback(data)
@@ -277,7 +363,13 @@ class AudioCapture:
             p.terminate()
 
         duration = len(frames) * self.config.chunk_duration_ms / 1000.0
-        logging.info("Recorded %.1f s of audio (%d chunks)", duration, len(frames))
+        logging.info(
+            "Recorded %.1f s of audio (%d chunks, capture=%d Hz, asr=%d Hz)",
+            duration,
+            len(frames),
+            capture_rate,
+            self.config.sample_rate,
+        )
 
         with wave.open(output_path, "wb") as wf:
             wf.setnchannels(self.config.channels)

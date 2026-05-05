@@ -53,7 +53,7 @@ Edit your keyboard shortcut settings (GNOME Settings → Keyboard → Keyboard S
 | Field | Value |
 |---|---|
 | Name | Toggle Dictation |
-| Command | `/home/jie/03_Exp/nim-asr/toggle_dictation.sh` |
+| Command | `~/03_Exp/nim-asr/toggle_dictation.sh` |
 | Shortcut | Choose a key — e.g. `Ctrl+Super+D` |
 
 ## Usage

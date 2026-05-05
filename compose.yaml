@@ -8,14 +8,14 @@ services:
       - NGC_API_KEY=${NGC_API_KEY}
       - NIM_TAGS_SELECTOR=${NIM_TAGS_SELECTOR}
       - NIM_HTTP_API_PORT=${NIM_HTTP_API_PORT:-9000}
-      - NIM_GRPC_API_PORT=${NIM_GRPC_API_PORT:-50051}
-      - NIM_DISABLE_MODEL_DOWNLOAD=true
+      - NIM_GRPC_API_PORT=${NIM_GRPC_API_PORT:-50505}
+      - NIM_DISABLE_MODEL_DOWNLOAD=true  # comment this out on the first run
     ports:
       - "${NIM_HTTP_API_PORT:-9000}:9000"
       - "${NIM_GRPC_API_PORT:-50051}:50051"
     volumes:
       - ${LOCAL_NIM_CACHE}:/opt/nim/.cache
-      - ${RIVA_MODELS_PATH}:/data/models
+      - ${RIVA_MODELS_PATH}:/data/models  # comment this out on the first run
     deploy:
       resources:
         reservations:
