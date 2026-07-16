@@ -99,6 +99,38 @@ class StreamingTranscriber:
         return " ".join(parts).strip()
 
 
+class OfflineTranscriber:
+    def __init__(self, config: DictationConfig) -> None:
+        self.config = config
+        self._service: riva.client.ASRService | None = None
+
+    def _connect(self) -> riva.client.ASRService:
+        if self._service is None:
+            auth = riva.client.Auth(uri=self.config.riva_server)
+            self._service = riva.client.ASRService(auth)
+        return self._service
+
+    def transcribe(self, wav_path: str) -> str:
+        service = self._connect()
+        with wave.open(wav_path, "rb") as wf:
+            raw_pcm = wf.readframes(wf.getnframes())
+
+        logging.info("Sending %d PCM bytes to offline ASR ...", len(raw_pcm))
+        t0 = time.monotonic()
+        response = service.offline_recognize(
+            audio_bytes=raw_pcm,
+            config=_build_recognition_config(self.config),
+        )
+        parts = [
+            result.alternatives[0].transcript
+            for result in response.results
+            if result.alternatives
+        ]
+        elapsed = time.monotonic() - t0
+        logging.info("Offline ASR finished in %.1f s", elapsed)
+        return " ".join(parts).strip()
+
+
 class ConcurrentTranscriber:
     def __init__(self, config: DictationConfig) -> None:
         self.config = config

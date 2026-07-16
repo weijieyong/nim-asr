@@ -84,6 +84,9 @@ class DictationConfig:
     automatic_punctuation: bool = True
     verbatim_transcripts: bool = False
     endpointing_stop_history_ms: int = 800
+    asr_mode: str = field(
+        default_factory=lambda: _getenv_str("NIM_ASR_MODE", "stream") or "stream"
+    )
 
     # Keep this small and limited to terms that repeatedly fail without boosting.
     # Broad/common words create false positives in otherwise normal dictation.
@@ -172,6 +175,12 @@ class DictationConfig:
     def __post_init__(self) -> None:
         if self.capture_sample_rate is None:
             self.capture_sample_rate = self.sample_rate
+        self.asr_mode = self.asr_mode.strip().lower()
+        if self.asr_mode not in {"stream", "offline"}:
+            logging.warning(
+                "Ignoring invalid NIM_ASR_MODE=%r; using stream", self.asr_mode
+            )
+            self.asr_mode = "stream"
         if self.log_level.upper() in ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"):
             self.log_level = self.log_level.upper()
         else:

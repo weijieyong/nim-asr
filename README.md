@@ -8,12 +8,12 @@ Toggle-based dictation that converts speech to text into any text field. Press a
 
 ```
 Hotkey press 1 → Start process → Wait for "Recording…"
-     ↓  Microphone and streaming ASR are ready
+     ↓  Microphone is ready; ASR mode is selected by NIM_ASR_MODE
      ↓  Speak naturally (pause, think, continue)
 Hotkey press 2 → Stop recording → Finalize transcript → Insert text
 ```
 
-Audio is streamed to Riva ASR **during** recording in a background thread, so most of the GPU work finishes before you press stop. After stopping, only the trailing ~0.5-1s of audio needs finalization. No partial/interim text is ever typed.
+In `stream` mode, audio is sent to Riva ASR **during** recording in a background thread, so most of the GPU work finishes before you press stop. In `offline` mode, the complete WAV is sent once after recording stops, which adds processing delay but gives the recognizer the full utterance. No partial/interim text is ever typed in either mode.
 
 The first press starts a new Python process and opens the USB microphone. This creates a short startup window. Wait for the **Recording…** notification or tray indicator before speaking; audio spoken before the microphone is ready cannot be captured.
 
@@ -43,7 +43,8 @@ Create `.env` and configure the NGC key, model profile, cache paths, ports, and 
 NGC_API_KEY=<your-key>
 
 CONTAINER_ID=parakeet-1-1b-ctc-en-us
-NIM_TAGS_SELECTOR=diarizer=disabled,mode=str,vad=default
+# Keep both streaming and offline inference available.
+NIM_TAGS_SELECTOR=mode=all,vad=default,diarizer=disabled
 NIM_DISABLE_MODEL_DOWNLOAD=false
 
 LOCAL_NIM_CACHE=/home/<user>/.cache/nim
@@ -54,6 +55,8 @@ NIM_GRPC_API_PORT=50501
 
 NIM_ASR_INPUT_DEVICE_INDEX=<pyaudio-device-index>
 NIM_ASR_CAPTURE_SAMPLE_RATE=44100
+# Client path: stream (default) or offline.
+NIM_ASR_MODE=stream
 NIM_ASR_KEEP_AUDIO=false
 ```
 
@@ -66,7 +69,8 @@ docker compose up -d
 docker compose logs -f
 ```
 
-With the configuration above, the server exposes HTTP on `localhost:9000` and gRPC on `localhost:50501`. The application currently uses the low-latency streaming profile through gRPC.
+With the configuration above, the server exposes HTTP on `localhost:9000` and gRPC on `localhost:50501`. The `mode=all` profile keeps both streaming and offline inference available; the client selects the path with `NIM_ASR_MODE`.
+If the server was already running with `mode=str`, run `docker compose up -d` once after changing the selector so the combined profile is loaded.
 
 ### 2. Client Dependencies
 
@@ -110,6 +114,7 @@ The client currently uses these quality-oriented defaults from `DictationConfig`
 | Setting | Default | Purpose |
 |---|---:|---|
 | Audio chunk duration | 100 ms | Low-latency transport; chunks remain one continuous ASR stream |
+| ASR mode | `stream` | Set `NIM_ASR_MODE=offline` to send the complete WAV after stopping |
 | Automatic punctuation | Enabled | Adds punctuation and capitalization |
 | Verbatim transcripts | Disabled | Enables written-form normalization such as spoken numbers to digits |
 | Endpoint stop history | 800 ms | Avoids prematurely finalizing speech during short pauses |
@@ -165,9 +170,9 @@ Listen to that file to determine whether missing words were lost during capture 
 
 ## Power / Battery Notes
 
-On battery (GPU capped at ~30W), the model runs at roughly **1× real-time** — 5 seconds of speech takes ~5 seconds to process. With concurrent streaming, processing overlaps with recording, so you only wait **~1s** after pressing stop.
+On battery (GPU capped at ~30W), the model runs at roughly **1× real-time** — 5 seconds of speech takes ~5 seconds to process. Streaming overlaps this work with recording; offline mode performs it after stopping, so the full processing time is added to the finalization wait.
 
-On AC power (full GPU wattage), RTF drops to ~0.3-0.5×. Processing finishes before you even press stop.
+On AC power (full GPU wattage), RTF drops to ~0.3-0.5×. Streaming processing often finishes before you press stop; offline mode still waits until the recording ends before submitting the WAV.
 
 ## Logging
 
@@ -184,12 +189,13 @@ All sessions are logged to `dictation.log` with timestamps:
 
 ## Riva and Audio Notes
 
-- The deployed profile is `diarizer=disabled,mode=str,vad=default`.
+- The deployed profile is `mode=all,vad=default,diarizer=disabled`, which exposes both streaming and offline models.
 - Do not switch this Parakeet 1.1B CTC streaming profile to unsupported VAD/diarizer combinations without checking the NIM support matrix for the installed image.
 - The USB microphone can capture at 44.1 kHz while the ASR model receives 16 kHz mono PCM.
 - The 100 ms buffers are transport chunks, not independently transcribed sentences.
 - Live audio is queued while the background gRPC connection starts, so ASR connection startup does not discard captured microphone chunks.
-- If concurrent ASR fails, the saved WAV is replayed through the streaming endpoint as a fallback.
+- In streaming mode, if concurrent ASR fails, the saved WAV is replayed through the streaming endpoint as a fallback.
+- In offline mode, the saved WAV is sent in one request through the offline endpoint.
 
 ## Maintenance
 
@@ -224,7 +230,7 @@ The core logic lives in the `dictation/` package; `offline_dictation.py` is a th
 |---|---|
 | `dictation/config.py` | `DictationConfig` dataclass + `.env` helpers |
 | `dictation/audio.py` | `AudioCapture` + PCM resampler |
-| `dictation/asr.py` | `ConcurrentTranscriber` + `StreamingTranscriber` (fallback) |
+| `dictation/asr.py` | `ConcurrentTranscriber` + `OfflineTranscriber` + `StreamingTranscriber` (fallback) |
 | `dictation/post.py` | `PostProcessor` (replacements + whitespace) |
 | `dictation/insert.py` | `TextInserter` (xdotool backend) |
 | `offline_dictation.py` | Session lifecycle, signal handling, logging |

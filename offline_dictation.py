@@ -14,6 +14,7 @@ from dictation import (
     AudioCapture,
     ConcurrentTranscriber,
     DictationConfig,
+    OfflineTranscriber,
     PostProcessor,
     StreamingTranscriber,
     TextInserter,
@@ -187,7 +188,9 @@ def _run_session(config: DictationConfig) -> int:
     tmp.close()
 
     capture = AudioCapture(config)
-    transcriber = ConcurrentTranscriber(config)
+    transcriber: ConcurrentTranscriber | None = None
+    if config.asr_mode == "stream":
+        transcriber = ConcurrentTranscriber(config)
 
     def _on_stop(signum: int, _frame: object) -> None:
         if not capture.is_stopped:
@@ -199,7 +202,8 @@ def _run_session(config: DictationConfig) -> int:
     signal.signal(signal.SIGINT, _on_stop)
     signal.signal(signal.SIGTERM, _on_stop)
 
-    transcriber.start()
+    if transcriber is not None:
+        transcriber.start()
 
     def _on_start() -> None:
         _write_state("recording")
@@ -210,7 +214,7 @@ def _run_session(config: DictationConfig) -> int:
     try:
         capture.record(
             tmp_path,
-            chunk_callback=transcriber.feed,
+            chunk_callback=transcriber.feed if transcriber is not None else None,
             on_start=_on_start,
         )
     except (OSError, IOError) as exc:
@@ -234,14 +238,27 @@ def _run_session(config: DictationConfig) -> int:
     signal.signal(signal.SIGTERM, signal.SIG_DFL)
 
     transcript = ""
-    try:
-        transcript = transcriber.stop()
-    except RuntimeError:
-        logging.warning("Concurrent ASR failed — falling back to two-phase replay.")
+    if config.asr_mode == "offline":
         try:
-            transcript = StreamingTranscriber(config).transcribe(tmp_path)
+            transcript = OfflineTranscriber(config).transcribe(tmp_path)
         except Exception as exc:
-            logging.error("Fallback ASR also failed: %s", exc)
+            logging.warning(
+                "Offline ASR failed — falling back to streaming replay: %s", exc
+            )
+            try:
+                transcript = StreamingTranscriber(config).transcribe(tmp_path)
+            except Exception as fallback_exc:
+                logging.error("Streaming fallback also failed: %s", fallback_exc)
+    else:
+        assert transcriber is not None
+        try:
+            transcript = transcriber.stop()
+        except RuntimeError:
+            logging.warning("Concurrent ASR failed — falling back to two-phase replay.")
+            try:
+                transcript = StreamingTranscriber(config).transcribe(tmp_path)
+            except Exception as exc:
+                logging.error("Fallback ASR also failed: %s", exc)
 
     if config.keep_audio:
         logging.info("Kept recorded audio for debugging: %s", tmp_path)
