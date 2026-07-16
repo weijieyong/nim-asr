@@ -7,22 +7,27 @@ Toggle-based dictation that converts speech to text into any text field. Press a
 ## How It Works
 
 ```
-Hotkey press 1 → Start recording (mic + ASR run concurrently)
+Hotkey press 1 → Start process → Wait for "Recording…"
+     ↓  Microphone and streaming ASR are ready
      ↓  Speak naturally (pause, think, continue)
 Hotkey press 2 → Stop recording → Finalize transcript → Insert text
 ```
 
 Audio is streamed to Riva ASR **during** recording in a background thread, so most of the GPU work finishes before you press stop. After stopping, only the trailing ~0.5-1s of audio needs finalization. No partial/interim text is ever typed.
 
+The first press starts a new Python process and opens the USB microphone. This creates a short startup window. Wait for the **Recording…** notification or tray indicator before speaking; audio spoken before the microphone is ready cannot be captured.
+
 ## Prerequisites
 
-- Linux with X11 (Wayland support planned)
+- Linux with X11
 - [xdotool](https://www.semicomplete.com/projects/xdotool/)
+- `notify-send` for status notifications
+- `yad` for the optional persistent recording tray indicator
 - NVIDIA GPU with Docker + NVIDIA Container Toolkit
 
 ```bash
 sudo apt update
-sudo apt install xdotool portaudio19-dev
+sudo apt install xdotool libnotify-bin yad portaudio19-dev
 
 # Install uv (if not already installed)
 curl -LsSf https://astral.sh/uv/install.sh | sh
@@ -32,19 +37,45 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 
 ### 1. Riva NIM ASR Server
 
-Configure your `.env` file with an NGC API key, then start the server:
+Create `.env` and configure the NGC key, model profile, cache paths, ports, and microphone:
 
-```bash
-docker compose up
+```dotenv
+NGC_API_KEY=<your-key>
+
+CONTAINER_ID=parakeet-1-1b-ctc-en-us
+NIM_TAGS_SELECTOR=diarizer=disabled,mode=str,vad=default
+NIM_DISABLE_MODEL_DOWNLOAD=false
+
+LOCAL_NIM_CACHE=/home/<user>/.cache/nim
+RIVA_MODELS_PATH=/path/to/nim-asr/riva-models/models
+
+NIM_HTTP_API_PORT=9000
+NIM_GRPC_API_PORT=50501
+
+NIM_ASR_INPUT_DEVICE_INDEX=<pyaudio-device-index>
+NIM_ASR_CAPTURE_SAMPLE_RATE=44100
+NIM_ASR_KEEP_AUDIO=false
 ```
 
-The server exposes a gRPC endpoint at `localhost:50501` by default when `NIM_GRPC_API_PORT=50501` (the model is `parakeet-1.1b-en-US-asr-streaming` — streaming-only).
+On the first run, allow the model download. After the model is present in the mounted cache/model paths, `NIM_DISABLE_MODEL_DOWNLOAD=true` can prevent repeat downloads.
+
+Start the server:
+
+```bash
+docker compose up -d
+docker compose logs -f
+```
+
+With the configuration above, the server exposes HTTP on `localhost:9000` and gRPC on `localhost:50501`. The application currently uses the low-latency streaming profile through gRPC.
 
 ### 2. Client Dependencies
 
 ```bash
 uv sync
+uv run mic_check.py
 ```
+
+Set `NIM_ASR_INPUT_DEVICE_INDEX` to the desired PyAudio input index. If that device does not accept 16 kHz directly, set `NIM_ASR_CAPTURE_SAMPLE_RATE` to a supported rate; captured mono PCM is resampled to the model's 16 kHz input rate.
 
 ### 3. Bind the Toggle Script to a Global Hotkey
 
@@ -53,18 +84,37 @@ Edit your keyboard shortcut settings (GNOME Settings → Keyboard → Keyboard S
 | Field | Value |
 |---|---|
 | Name | Toggle Dictation |
-| Command | `~/03_Exp/nim-asr/toggle_dictation.sh` |
+| Command | `/home/simt-wj/02_Tools/nim-asr/toggle_dictation.sh` |
 | Shortcut | Choose a key — e.g. `Ctrl+Super+D` |
+
+If the repository is moved, update `PROJECT_DIR` in `toggle_dictation.sh` and the keyboard shortcut command.
 
 ## Usage
 
 | Action | Result |
 |---|---|
-| Press shortcut (1st time) | Notification "Recording…" — speak naturally |
-| Press shortcut (2nd time) | Notification "Stopping…" — audio finalizes → text appears in active field |
+| Press shortcut (1st time) | Starts Python and opens the microphone |
+| Notification and system-tray microphone appear | Recording is ready — begin speaking |
+| Press shortcut while recording | Stops capture and finalizes the transcript |
+| Press shortcut while starting/finishing | Shows current state; does not interrupt the session |
 | Notification "Inserted N characters" | Done |
 
-The text appears in whatever window or terminal is currently focused (IDE, terminal, browser, etc.).
+The text appears in whatever window or terminal is focused when transcription finishes. The launcher uses `.dictation_state` to distinguish `starting`, `recording`, and `finishing`, and sends `SIGINT` only while actively recording.
+
+While the microphone stream is open, a persistent microphone icon appears in the system tray with the tooltip **Microphone active — dictation is recording**. It disappears as soon as audio capture stops, before transcript finalization. This uses `yad` and requires a desktop tray/AppIndicator implementation.
+
+## Recognition Defaults
+
+The client currently uses these quality-oriented defaults from `DictationConfig`:
+
+| Setting | Default | Purpose |
+|---|---:|---|
+| Audio chunk duration | 100 ms | Low-latency transport; chunks remain one continuous ASR stream |
+| Automatic punctuation | Enabled | Adds punctuation and capitalization |
+| Verbatim transcripts | Disabled | Enables written-form normalization such as spoken numbers to digits |
+| Endpoint stop history | 800 ms | Avoids prematurely finalizing speech during short pauses |
+| Interim results | Disabled | Partial text is never exposed or typed |
+| Word boosting | Disabled | Avoids false positives from broad context biasing |
 
 ## Post-Processing
 
@@ -76,7 +126,6 @@ Raw ASR output is cleaned up via a configurable replacement dictionary — usefu
 |---|---|
 | "dot py" | `.py` |
 | "dot json" | `.json` |
-| "underscore" | `_` |
 | "star star" | `**` |
 | "new line" | `\n` |
 | "tab" | `\t` |
@@ -89,15 +138,30 @@ Replacements are sorted by key length (longest first) so `"dot py "` matches bef
 
 ### Word Boosting
 
-The ASR often misrecognizes domain-specific terms (technical jargon, names, unusual words). Add them to `DictationConfig.boosted_words` in `dictation/config.py`:
+Word boosting is disabled by default because broad or common boosted words can
+create false positives. Add only uncommon terms that repeatedly fail without
+boosting to `DictationConfig.boosted_words` in `dictation/config.py`:
 
 ```python
 boosted_words = [
-    "Python", "TypeScript", "FastAPI", "CUDA",
-    "async", "await", "kwargs", "middleware",
-    # add your own domain terms
+    "FastAPI",
+    "PyTorch",
+    # Add only terms verified against retained recordings.
 ]
 ```
+
+Keep the initial boost score at `20.0`. Do not boost common words such as
+`let`, `function`, or `variable`.
+
+### Debugging Cut-Off Transcripts
+
+Set `NIM_ASR_KEEP_AUDIO=true` in `.env` to keep each session's temporary WAV. The retained path is written to `dictation.log`:
+
+```text
+Kept recorded audio for debugging: /tmp/tmpabcdef.wav
+```
+
+Listen to that file to determine whether missing words were lost during capture or transcription. Leave this disabled during normal use because recordings can contain sensitive audio.
 
 ## Power / Battery Notes
 
@@ -110,28 +174,30 @@ On AC power (full GPU wattage), RTF drops to ~0.3-0.5×. Processing finishes bef
 All sessions are logged to `dictation.log` with timestamps:
 
 ```
-[2026-05-04 18:23:36] Recording … (press the dictation shortcut again to stop)
-[2026-05-04 18:23:36] Recorded 4.9 s of audio (49 chunks)
-[2026-05-04 18:23:36] Saved 156844 bytes to /tmp/tmpco9onnge.wav
-[2026-05-04 18:23:36] Replaying 156800 PCM bytes through streaming ASR ...
-[2026-05-04 18:23:39] Streaming ASR finished in 5.4 s (1 utterance(s))
-[2026-05-04 18:23:39] Raw transcript: hello world
-[2026-05-04 18:23:39] Inserted 11 characters via xdotool
+[2026-07-16 15:19:52] INFO     === dictation session start ===
+[2026-07-16 15:19:52] INFO     Recording … (press the dictation shortcut again to stop)
+[2026-07-16 15:20:09] INFO     Received SIGINT – stopping recording …
+[2026-07-16 15:20:09] INFO     Recorded 14.7 s of audio (147 chunks, capture=44100 Hz, asr=16000 Hz)
+[2026-07-16 15:20:09] INFO     Raw transcript (36 chars): What is natural language processing?
+[2026-07-16 15:20:09] INFO     Inserted 36 characters via xdotool
 ```
 
-## Configuration Notes (Riva Server)
+## Riva and Audio Notes
 
-- **VAD & Diarization**: If background noise (fan) affects performance, try `vad=silero` with `diarizer=sortformer`
-- **Model Type**: Avoid `model_type=prebuilt` (triggers DGX Spark version)
-- This model (`parakeet-1.1b-en-US-asr-streaming`) is streaming-only — offline/batch ASR is not supported
+- The deployed profile is `diarizer=disabled,mode=str,vad=default`.
+- Do not switch this Parakeet 1.1B CTC streaming profile to unsupported VAD/diarizer combinations without checking the NIM support matrix for the installed image.
+- The USB microphone can capture at 44.1 kHz while the ASR model receives 16 kHz mono PCM.
+- The 100 ms buffers are transport chunks, not independently transcribed sentences.
+- Live audio is queued while the background gRPC connection starts, so ASR connection startup does not discard captured microphone chunks.
+- If concurrent ASR fails, the saved WAV is replayed through the streaming endpoint as a fallback.
 
 ## Maintenance
 
-### Clear Cache & Models
+### Check Server Status
 
 ```bash
-rm -rf ~/03_Exp/nim-asr/riva-models/*
-rm -rf ~/.cache/nim/*
+docker compose ps
+docker compose logs --tail=200
 ```
 
 ### Inspect Models Inside Container
@@ -140,12 +206,13 @@ rm -rf ~/.cache/nim/*
 docker exec -it parakeet-1-1b-ctc-en-us ls -R /data/models
 ```
 
-### Export Models to Host
+### Restart the Server
 
 ```bash
-sudo docker cp parakeet-1-1b-ctc-en-us:/data/models /home/jie/03_Exp/nim-asr/riva-models
-sudo chown -R $USER:$USER /home/jie/03_Exp/nim-asr/riva-models
+docker compose restart
 ```
+
+Deleting the NIM cache or model directory forces a large model download/rebuild. Back up or verify the configured paths before removing either directory.
 
 ## Architecture (for Developers)
 
@@ -167,9 +234,14 @@ The core logic lives in the `dictation/` package; `offline_dictation.py` is a th
 
 | Symptom | Likely Cause | Fix |
 |---|---|---|
-| No notification on hotkey | Hotkey binding wrong path | Check shortcut points to `toggle_dictation.sh` |
-| "Recording…" but nothing appears after stop | Riva server not running | `docker compose up` |
+| First words are missing | Speaking before microphone readiness | Wait for the **Recording…** notification/tray indicator before speaking |
+| First words are missing even after waiting | Capture startup or ASR speech-start detection | Enable `NIM_ASR_KEEP_AUDIO=true`, reproduce once, and inspect the WAV |
+| No notification on hotkey | Wrong shortcut path or missing `notify-send` | Verify the shortcut and install `libnotify-bin` |
+| No persistent recording indicator | Missing `yad` or desktop tray/AppIndicator support | Install `yad` and enable the desktop's AppIndicator extension; notifications and recording still work without it |
+| "Recording…" but nothing appears after stop | Riva server unavailable | Run `docker compose ps` and inspect `docker compose logs --tail=200` |
 | Text appears 10s+ after stop | GPU on battery (30W) | Plug in AC power for faster processing |
-| ASR returns "Unavailable model" | Wrong model config | Check compose.yaml uses `parakeet-1.1b-en-US-asr-streaming` |
+| Poor accuracy or false technical words | Word boosting is too broad | Disable boosts; add only verified uncommon terms at score `20.0` |
+| Sentence is cut off | Capture or ASR endpointing issue | Retain the WAV and compare it with the raw transcript in `dictation.log` |
+| ASR returns "Unavailable model" | Wrong NIM profile or model cache | Check `CONTAINER_ID`, `NIM_TAGS_SELECTOR`, and server logs |
 | `xdotool` fails | Wrong X11 display / Wayland | Run `echo $DISPLAY`; use X11 session (Wayland support TBD) |
 | No audio recorded | Wrong mic selected | Run `uv run mic_check.py` to find the correct device index, set `NIM_ASR_INPUT_DEVICE_INDEX` in `.env` |

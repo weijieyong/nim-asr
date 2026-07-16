@@ -2,13 +2,29 @@ from __future__ import annotations
 
 import array
 import collections.abc
+import contextlib
 import logging
+import os
 import sys
 import wave
 
 import pyaudio
 
 from .config import DictationConfig
+
+
+@contextlib.contextmanager
+def ignore_stderr() -> collections.abc.Iterator[None]:
+    devnull = os.open(os.devnull, os.O_WRONLY)
+    old_stderr = os.dup(2)
+    sys.stderr.flush()
+    os.dup2(devnull, 2)
+    os.close(devnull)
+    try:
+        yield
+    finally:
+        os.dup2(old_stderr, 2)
+        os.close(old_stderr)
 
 
 def _resample_pcm16_mono(data: bytes, from_rate: int, to_rate: int) -> bytes:
@@ -54,23 +70,29 @@ class AudioCapture:
         self,
         output_path: str,
         chunk_callback: collections.abc.Callable[[bytes], None] | None = None,
+        on_start: collections.abc.Callable[[], None] | None = None,
     ) -> str:
         capture_rate = self.config.capture_sample_rate or self.config.sample_rate
         chunk = int(capture_rate * self.config.chunk_duration_ms / 1000)
-        p = pyaudio.PyAudio()
+        with ignore_stderr():
+            p = pyaudio.PyAudio()
         try:
-            stream = p.open(
-                format=p.get_format_from_width(self.config.sample_width),
-                channels=self.config.channels,
-                rate=capture_rate,
-                input=True,
-                input_device_index=self.config.input_device_index,
-                frames_per_buffer=chunk,
-            )
+            with ignore_stderr():
+                stream = p.open(
+                    format=p.get_format_from_width(self.config.sample_width),
+                    channels=self.config.channels,
+                    rate=capture_rate,
+                    input=True,
+                    input_device_index=self.config.input_device_index,
+                    frames_per_buffer=chunk,
+                )
         except OSError as exc:
             logging.error("Failed to open microphone: %s", exc)
             p.terminate()
             raise
+
+        if on_start is not None:
+            on_start()
 
         frames: list[bytes] = []
         self._stopped = False

@@ -18,10 +18,9 @@ class TextInserter:
 
     @staticmethod
     def _insert_xdotool(text: str) -> None:
-        safe = text.replace("\\", "\\\\").replace('"', '\\"').replace("`", "\\`")
-        safe = safe.replace("$", "\\$")
-        cmd = ["xdotool", "type", "--clearmodifiers", "--delay", "0", "--", safe]
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+        timeout = max(10.0, len(text) * 0.02)
+        cmd = ["xdotool", "type", "--clearmodifiers", "--delay", "2", "--", text]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
         if result.returncode != 0:
             logging.error(
                 "xdotool failed (rc=%d): %s", result.returncode, result.stderr.strip()

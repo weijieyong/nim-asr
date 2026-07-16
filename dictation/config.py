@@ -42,6 +42,19 @@ def _getenv_str(name: str, default: str | None = None) -> str | None:
     return value.strip()
 
 
+def _getenv_bool(name: str, default: bool = False) -> bool:
+    value = _getenv_str(name)
+    if value is None:
+        return default
+    normalized = value.lower()
+    if normalized in ("1", "true", "yes", "on"):
+        return True
+    if normalized in ("0", "false", "no", "off"):
+        return False
+    logging.warning("Ignoring invalid boolean for %s: %r", name, value)
+    return default
+
+
 def _default_riva_server() -> str:
     server = _getenv_str("NIM_ASR_RIVA_SERVER")
     if server is not None:
@@ -70,47 +83,17 @@ class DictationConfig:
     profanity_filter: bool = False
     automatic_punctuation: bool = True
     verbatim_transcripts: bool = False
+    endpointing_stop_history_ms: int = 800
 
-    boosted_words: list[str] = field(
-        default_factory=lambda: [
-            # Programming languages & tools
-            "Python",
-            "JavaScript",
-            "TypeScript",
-            "Rust",
-            "GoLang",
-            "CUDA",
-            "PyTorch",
-            "TensorFlow",
-            "FastAPI",
-            "React",
-            "Node",
-            "Docker",
-            "Kubernetes",
-            "gRPC",
-            "protobuf",
-            "REST",
-            "GraphQL",
-            "GitHub",
-            "Copilot",
-            "OpenCV",
-            "ROS",
-            # Common coding terms
-            "async",
-            "await",
-            "function",
-            "variable",
-            "const",
-            "let",
-            "kwargs",
-            "args",
-            "enum",
-            "config",
-            "middleware",
-            "endpoint",
-        ]
+    # Keep this small and limited to terms that repeatedly fail without boosting.
+    # Broad/common words create false positives in otherwise normal dictation.
+    boosted_words: list[str] = field(default_factory=list)
+    boost_score: float = 20.0  # Range 20-100 per NVIDIA docs; higher = stronger bias
+
+    # Debugging: retain the temporary WAV when explicitly requested.
+    keep_audio: bool = field(
+        default_factory=lambda: _getenv_bool("NIM_ASR_KEEP_AUDIO")
     )
-    boost_score: float = 10.0
 
     # --- Text insertion ---
     inserter: str = "xdotool"

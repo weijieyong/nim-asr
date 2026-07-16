@@ -29,6 +29,25 @@ def _build_recognition_config(config: DictationConfig) -> riva.client.Recognitio
     return inner
 
 
+def _build_streaming_config(
+    config: DictationConfig,
+) -> riva.client.StreamingRecognitionConfig:
+    streaming = riva.client.StreamingRecognitionConfig(
+        config=_build_recognition_config(config),
+        interim_results=False,
+    )
+    riva.client.add_endpoint_parameters_to_config(
+        streaming,
+        start_history=0,
+        start_threshold=0.0,
+        stop_history=config.endpointing_stop_history_ms,
+        stop_history_eou=0,
+        stop_threshold=0.0,
+        stop_threshold_eou=0.0,
+    )
+    return streaming
+
+
 class StreamingTranscriber:
     _CHUNK_N_FRAMES: int = 1600
 
@@ -44,10 +63,7 @@ class StreamingTranscriber:
 
     def transcribe(self, wav_path: str) -> str:
         service = self._connect()
-        streaming_config = riva.client.StreamingRecognitionConfig(
-            config=_build_recognition_config(self.config),
-            interim_results=False,
-        )
+        streaming_config = _build_streaming_config(self.config)
 
         with wave.open(wav_path, "rb") as wf:
             raw_pcm = wf.readframes(wf.getnframes())
@@ -103,6 +119,8 @@ class ConcurrentTranscriber:
         self._chunks.put(None)
         assert self._thread is not None
         self._thread.join(timeout=30)
+        if self._thread.is_alive():
+            raise RuntimeError("concurrent ASR timed out before final transcript")
         if self._error is not None:
             raise RuntimeError("concurrent ASR failed") from self._error
         with self._lock:
@@ -112,10 +130,7 @@ class ConcurrentTranscriber:
         try:
             auth = riva.client.Auth(uri=self.config.riva_server)
             service = riva.client.ASRService(auth)
-            streaming_config = riva.client.StreamingRecognitionConfig(
-                config=_build_recognition_config(self.config),
-                interim_results=False,
-            )
+            streaming_config = _build_streaming_config(self.config)
 
             def chunk_gen():
                 while True:
@@ -124,7 +139,9 @@ class ConcurrentTranscriber:
                         break
                     yield chunk
 
-            for response in service.streaming_response_generator(chunk_gen(), streaming_config):
+            for response in service.streaming_response_generator(
+                chunk_gen(), streaming_config
+            ):
                 for result in response.results:
                     if result.is_final and result.alternatives:
                         with self._lock:
